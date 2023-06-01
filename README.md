@@ -12,7 +12,7 @@ signatures.
 It is currently just a test tool and can take at most 4 kiB large
 files.
 
-See [Release notes](docs/release_notes.md).
+See [Release notes](RELEASE.md).
 
 ### Usage
 
