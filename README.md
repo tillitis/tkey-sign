@@ -3,21 +3,18 @@
 
 # tkey-sign
 
-`tkey-sign` is a command to do a cryptographic signature (ed25519)
-over a file using the [Tillitis](https://tillitis.se/) TKey. It uses
-the [signer device
+`tkey-sign` is a utility that can do and verify an Ed25519
+cryptographic signature over a digest of a file using the
+[Tillitis](https://tillitis.se/) TKey. It uses the [signer device
 app](https://github.com/tillitis/tkey-device-signer) for the actual
 signatures.
 
-It can also verify a signature, by supplying the message, signature
-and the public key.
-
-It is currently just a test tool and can take at most 4 kiB large
-files.
+It can also verify a signature by passing files with the message,
+signature, and the public key as arguments.
 
 See [Release notes](RELEASE.md).
 
-### Usage
+## Usage
 
 ```
 $ tkey-sign <command> [flags...] FILE...

@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha512"
 	_ "embed"
 	"encoding/hex"
 	"errors"
@@ -75,22 +76,21 @@ func signFile(signer tkeysign.Signer, pubkey []byte, fileName string) ([]byte, e
 		return nil, fmt.Errorf("could not read %s: %w", fileName, err)
 	}
 
-	if len(message) > tkeysign.MaxSignSize {
-		return nil, fmt.Errorf("message too long, max is %d bytes", tkeysign.MaxSignSize)
-	}
+	fileDigest := sha512.Sum512(message)
+	le.Printf("SHA512 hash: %x\n", fileDigest)
 
-	le.Printf("Sending a %v bytes message for signing.\n", len(message))
 	if signerAppNoTouch == "" {
 		le.Printf("The TKey will flash green when touch is required ...\n")
 	} else {
 		le.Printf("WARNING! This tkey-sign and signer app is built with the touch requirement removed\n")
 	}
-	signature, err := signer.Sign(message)
+
+	signature, err := signer.Sign(fileDigest[:])
 	if err != nil {
 		return nil, fmt.Errorf("signing failed: %w", err)
 	}
 
-	if !ed25519.Verify(pubkey, message, signature) {
+	if !ed25519.Verify(pubkey, fileDigest[:], signature) {
 		return nil, fmt.Errorf("signature FAILED verification")
 	}
 
@@ -115,14 +115,13 @@ func fileInputToHex(inputFile string) ([]byte, error) {
 
 // verifySignature verifies a Ed25519 signature from input files of message, signature and public key
 func verifySignature(fileMessage string, fileSignature string, filePubkey string) error {
-	message, err := os.ReadFile(fileMessage)
-	if err != nil {
-		return fmt.Errorf("could not read %s: %w", fileMessage, err)
-	}
-
 	signature, err := fileInputToHex(fileSignature)
 	if err != nil {
 		return fmt.Errorf("decodeFileInput: %w", err)
+	}
+
+	if len(signature) != 64 {
+		return fmt.Errorf("invalid length of signature. Expected 64 bytes, got %d bytes", len(signature))
 	}
 
 	pubkey, err := fileInputToHex(filePubkey)
@@ -130,11 +129,22 @@ func verifySignature(fileMessage string, fileSignature string, filePubkey string
 		return fmt.Errorf("decodeFileInput: %w", err)
 	}
 
+	if len(pubkey) != 32 {
+		return fmt.Errorf("invalid length of public key. Expected 32 bytes, got %d bytes", len(pubkey))
+	}
+
 	fmt.Printf("Public key: %x\n", pubkey)
 	fmt.Printf("Signature: %x\n", signature)
-	fmt.Printf("Message length: %d\n", len(message))
 
-	if !ed25519.Verify(pubkey, message, signature) {
+	message, err := os.ReadFile(fileMessage)
+	if err != nil {
+		return fmt.Errorf("could not read %s: %w", fileMessage, err)
+	}
+
+	digest := sha512.Sum512(message)
+	le.Printf("SHA512 hash: %x\n", digest)
+
+	if !ed25519.Verify(pubkey, digest[:], signature) {
 		return fmt.Errorf("signature not valid")
 	}
 
@@ -243,11 +253,12 @@ func main() {
 	// Default text to show
 	root := pflag.NewFlagSet("root", pflag.ExitOnError)
 	root.Usage = func() {
-		desc := fmt.Sprintf(`%[1]s communicates with the signer app running on Tillitis TKey and
-makes it sign data provided in FILE (the "message"). The message can be at most
-4096 bytes long. The signature made by the signer app is always output on stdout.
-Exit status code is 0 if everything went well and the signature also can be
-verified using the public key. Otherwise exit code is non-zero.
+		desc := fmt.Sprintf(`%[1]s signs the data provided in FILE (the "message")
+using the Tillitis TKey. The message will be hashed using
+SHA512 and signed with Ed25519 using the TKey's private key.
+
+It is also possible to verify signatures with this tool, provided
+the message, signature and public key.
 
 Usage:
   %[1]s <command> [flags] FILE...
@@ -279,11 +290,12 @@ Use <command> --help for further help, i.e. %[1]s verify --help`, os.Args[0])
 	cmdSign.Usage = func() {
 		desc := fmt.Sprintf(`Usage: %[1]s sign [flags...] FILE
 
-  Signes the data provided in FILE (the "message") using the Tillitis TKey.
-  The message can be at most 4096 bytes long. The signature made by the signer
-  app is always output on stdout. Exit status code is 0 if everything went well
-  and the signature also can be verified using the public key. Otherwise exit
-  code is non-zero.
+  Signs the data provided in FILE (the "message"). The message will be
+  hashed with SHA512 and signed with Ed25519 using the TKey's private key.
+
+  The signature is always output on stdout. Exit status code is 0 if everything
+  went well and the signature can be verified using the public key. Otherwise
+  exit code is non-zero.
 
   Alternatively, --show-pubkey can be used to only output (on stdout) the
   public key of the signer app on the TKey.`, os.Args[0])
@@ -293,15 +305,19 @@ Use <command> --help for further help, i.e. %[1]s verify --help`, os.Args[0])
 
 	// Flag for command "verify"
 	cmdVerify := pflag.NewFlagSet(verifyString, pflag.ExitOnError)
+	cmdVerify.SortFlags = false
 	cmdVerify.BoolVarP(&helpOnlyVerify, "help", "h", false, "Output this help.")
 	cmdVerify.Usage = func() {
 		desc := fmt.Sprintf(`Usage: %[1]s verify FILE SIG-FILE PUBKEY-FILE
 
-  Verifies wheather the Ed25519 signature of the FILE is valid, based on the input files
-  SIG-FILE and PUBKEY-FILE. Newlines will be striped from the input files. The return value
-  is zero if the signature is valid, otherwise non-zero.
+  Verifies wheather the Ed25519 signature of the message is valid
+  using the public key. Does not need a connected TKey to verify.
 
-  Does not need a connected TKey to verify.`, os.Args[0])
+  SIG-FILE is expected to be an 64 bytes Ed25519 signature in hex.
+  PUBKEY-FILE is expected to be an 64 bytes Ed25519 public key in hex.
+
+  The return value is 0 if the signature is valid, otherwise non-zero.
+  Newlines will be striped from the input files. `, os.Args[0])
 		le.Printf("%s\n\n%s", desc,
 			cmdVerify.FlagUsagesWrapped(86))
 	}
